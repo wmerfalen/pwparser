@@ -29,9 +29,6 @@ enum errors {
 };
 void dump();
 
-#define CHUNK_SIZE 256
-
-
 static size_t arena_size = 0;
 static char* arena = NULL;
 static size_t arena_index = 0;
@@ -83,30 +80,8 @@ static tList* users_list_head = NULL;
 static size_t read_size = 0;
 static char* buf = NULL;
 static size_t buf_index =  0;
-static size_t line_number = 0;
+static unsigned int line_number = 0;
 static int8_t premature_eof = 0;
-int accept(unsigned int s) {
-	if(buf_index >= read_size) {
-		premature_eof = 1;
-		return 0;
-	}
-	if((s & ALPHA) && isalpha(buf[buf_index])) {
-		return 1;
-	}
-	if((s & NUMERIC) && isdigit(buf[buf_index])) {
-		return 1;
-	}
-	if((s & UNDERSCORE) && buf[buf_index] == '_') {
-		return 1;
-	}
-	if((s & COLON) && buf[buf_index] == ':') {
-		return 1;
-	}
-	if((s & NEWLINE) && buf[buf_index] == '\n') {
-		return 1;
-	}
-	return 0;
-}
 int expect(unsigned int s) {
 	if(buf_index >= read_size) {
 		premature_eof = 1;
@@ -135,7 +110,6 @@ int scan_until(char sentinel) {
 		return 0;
 	}
 	size_t ctr = buf_index;
-	size_t end = buf_index;
 	for(; ctr < read_size; ctr++) {
 		if(buf[ctr] == sentinel) {
 			return ctr;
@@ -184,7 +158,7 @@ int username() {
 		if(out_of_memory) {
 			return 0;
 		}
-		memset(element,0,sizeof(element));
+		memset(element,0,sizeof(tList));
 		element->username = uname;
 		append_element(element);
 		return offset_end - buf_index;
@@ -259,7 +233,6 @@ struct stat sb;
 size_t length;
 ssize_t s;
 void handle_error(int exit_status) {
-#ifdef DEBUG
 	char* where = NULL;
 	switch(exit_status) {
 		case ERR_OPEN:
@@ -317,8 +290,11 @@ void handle_error(int exit_status) {
 			where = "unknown";
 			break;
 	}
-	fprintf(stderr,"Failure: '%s'\n",where);
-#endif
+	if(line_number) {
+		fprintf(stderr,"Failure: '%s' on line %d\n",where,line_number);
+	} else {
+		fprintf(stderr,"Failure: '%s'\n",where);
+	}
 	if(addr) {
 		munmap(addr, length);
 	}
@@ -435,6 +411,7 @@ int main(int argc,char** argv) {
 			handle_error(ERR_NEWLINE);
 		}
 		++buf_index;
+		++line_number;
 	}
 #ifdef DEBUG
 	printf("\t[ Bytes in use: %d ]\n",arena_index);
