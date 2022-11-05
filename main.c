@@ -120,15 +120,8 @@ int scan_until(char sentinel) {
 
 void append_element(tList* e) {
 	if(!users_list) {
-		users_list = (tList*)our_malloc(sizeof(tList));
-		if(!users_list) {
-			fprintf(stderr,"OUT OF MEMORY");
-			out_of_memory = 1;
-			return;
-		}
-		memset(users_list,0,sizeof(tList));
-		users_list_head = users_list;
-		users_list_head->next = e;
+		users_list = users_list_head = e;
+		return;
 	}
 	users_list->next = e;
 	users_list = e;
