@@ -1,5 +1,5 @@
 # pwparser
-A /etc/passwd file parser
+A /etc/passwd file parser written entirely in C
 
 # Compiling and running
 ```
