@@ -39,8 +39,6 @@ typedef int(*column_callback)(int column,char* ptr,unsigned int* i_ptr);
 
 enum {
 	CB_STOP_ITERATING,
-	CB_SKIP_STORAGE,
-	CB_SKIP_ROW,
 	CB_KEEP_ITERATING,
 };
 
@@ -237,12 +235,6 @@ int capture_via_delim(parser_context* ctx,char delim,char** out) {
 		size_t len = offset_end - ctx->buf_index;
 		*out = (char*)pwp_malloc(ctx,len + 1);
 		assert(!ctx->out_of_memory);
-		if(ctx->out_of_memory) {
-#ifdef DEBUG
-			fprintf(stderr,"OUT OF MEMORY");
-#endif
-			return 0;
-		}
 		bcopy(&ctx->buf[ctx->buf_index],*out,len);
 		(*out)[len] = 0x0;
 		return offset_end;
@@ -256,10 +248,6 @@ int parse_username(parser_context* ctx) {
 	if(offset_end > ctx->buf_index) {
 		tList* element = (tList*)pwp_malloc(ctx,sizeof(tList));
 		assert(!ctx->out_of_memory);
-		if(ctx->out_of_memory) {
-			ctx->error = ERR_OUT_OF_MEMORY;
-			return 0;
-		}
 		memset(element,0,sizeof(tList));
 		element->username = uname;
 		append_element(ctx,element);
@@ -329,22 +317,6 @@ int parse_shell(parser_context* ctx) {
 	}
 	return 0;
 }
-void dump(parser_context* ctx) {
-	assert(ctx != NULL);
-#ifdef DEBUG
-	int f = 10;
-	printf("\n--[ dump ]--\n");
-	for(off_t i = ctx->buf_index; i < CTX_BUF_SZ(ctx); i++) {
-		--f;
-		if(f == 0) {
-			break;
-		}
-		printf("%c",ctx->buf[i]);
-	}
-	printf("--[ end dump ]--\n");
-#endif
-}
-#endif
 
 void free_arena(parser_context* ctx) {
 	assert(ctx != NULL);
@@ -427,7 +399,7 @@ int pwp_parse(parser_context* ctx) {
 
 	int8_t keep_parsing= 1;
 	/** This while loop is essentially int line() */
-	while(keep_parsing && ctx->out_of_memory == 0 &&
+	while(keep_parsing &&
 	    ctx->buf_index < CTX_BUF_SZ(ctx) &&
 	    ctx->premature_eof == 0) {
 		int offset = parse_username(ctx);
@@ -517,23 +489,14 @@ int pwp_parse(parser_context* ctx) {
 				case CB_STOP_ITERATING:
 					keep_parsing = 0;
 					continue;
-				case CB_SKIP_STORAGE:
-				case CB_SKIP_ROW:
-				/** TODO: figure out how to do this */
+				default:
+				/** Fall-through behaviour is intentional */
 				case CB_KEEP_ITERATING:
 					keep_parsing = 1;
-					break;
-				default:
-#ifdef DEBUG
-					fprintf(stderr,"Unhandled CB_* constant: '%d'\n",result);
-#endif
 					break;
 			}
 		}
 	}
-#ifdef DEBUG
-	printf("\t[ Bytes in use: %lu ]\n",ctx->arena_index);
-#endif
 
 #define SHOULD_STOP(s) if(s == CB_STOP_ITERATING){ break; }
 	if(ctx->column_cb) {
@@ -588,3 +551,5 @@ int pwp_pluck_column(parser_context* ctx, int column_mask, column_callback* cb) 
 	ctx->mask = column_mask;
 	return pwp_parse(ctx);
 }
+
+#endif
