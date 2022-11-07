@@ -13,31 +13,6 @@
 
 #define CTX_BUF_SZ(c) c->stats.st_size
 
-enum target_type {
-	/**
-	 * T_COLUMN: targets a specific column.
-	 * Usage:
-	 * filter_expression f;
-	 * f.target = T_COLUMN;
-	 * f.target_data = T_USERNAME;
-	 * f.operation = OP_EQUALS;
-	 * f.operation_data = "root"
-	 */
-	T_COLUMN,
-
-	/**
-	 * T_EXTRACT_COLUMNS: fetches only specific columns.
-	 * Usage:
-	 * filter_expression f;
-	 * f.target = T_EXTRACT_COLUMNS;
-	 * f.target_data = (T_USERNAME | T_UID | T_HOME);
-	 * f.operation = 0;
-	 * f.operation_data = NULL;
-	 */
-	T_EXTRACT_COLUMNS,
-	T_ALL_ROWS,
-
-};
 enum target_columns {
 	T_USERNAME = (1 << 0),
 	T_PASSWORD = (1 << 1),
@@ -47,24 +22,6 @@ enum target_columns {
 	T_HOME = (1 << 5),
 	T_SHELL = (1 << 6),
 };
-
-enum operation_type {
-	NO_OPERATION_DATA = 0,
-	//OP_EQUALS,
-	OP_STRING_COMPARE,
-	//OP_STRING_STARTS_WITH,
-	//OP_CONTAINS,
-	//OP_EMPTY,
-	//OP_COUNT,
-};
-
-typedef struct _filter_expression {
-	unsigned int target;
-	unsigned int target_data;
-	unsigned int operation;
-	unsigned int operation_data;
-	char* data;
-} filter_expression;
 
 typedef struct sList {
 	char* username;
@@ -104,7 +61,6 @@ typedef struct _parser_context {
 	int8_t premature_eof;
 	int8_t out_of_memory;
 	int error;
-	filter_expression* filter;
 	row_callback* row_cb;
 	column_callback* column_cb;
 } parser_context;
@@ -468,7 +424,6 @@ int pwp_parse(parser_context* ctx) {
 		ctx->error = ERR_MUST_CALL_CREATE;
 		return PARSE_ERR_MUST_CALL_CREATE;
 	}
-	ctx->filter = NULL;
 
 	int8_t keep_parsing= 1;
 	/** This while loop is essentially int line() */
