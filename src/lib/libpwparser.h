@@ -16,6 +16,58 @@
 
 #define CTX_READ_SIZE(c) c->stats.st_size
 
+enum target_type {
+	/**
+	 * T_COLUMN: targets a specific column.
+	 * Usage:
+	 * filter_expression f;
+	 * f.target = T_COLUMN;
+	 * f.target_data = T_USERNAME;
+	 * f.operation = OP_EQUALS;
+	 * f.operation_data = "root"
+	 */
+	T_COLUMN,
+
+	/**
+	 * T_EXTRACT_COLUMNS: fetches only specific columns.
+	 * Usage:
+	 * filter_expression f;
+	 * f.target = T_EXTRACT_COLUMNS;
+	 * f.target_data = (T_USERNAME | T_UID | T_HOME);
+	 * f.operation = 0;
+	 * f.operation_data = NULL;
+	 */
+	T_EXTRACT_COLUMNS,
+	T_ALL_ROWS,
+
+};
+enum target_columns {
+	T_USERNAME = (1 << 0),
+	T_PASSWORD = (1 << 1),
+	T_UID = (1 << 2),
+	T_GID = (1 << 3),
+	T_GECOS = (1 << 4),
+	T_HOME = (1 << 5),
+	T_SHELL = (1 << 6),
+};
+
+enum operation_type {
+	NO_OPERATION_DATA = 0,
+	//OP_EQUALS,
+	OP_STRING_COMPARE,
+	//OP_STRING_STARTS_WITH,
+	//OP_CONTAINS,
+	//OP_EMPTY,
+	//OP_COUNT,
+};
+typedef struct _filter_expression {
+	unsigned int target;
+	unsigned int target_data;
+	unsigned int operation;
+	unsigned int operation_data;
+	char* data;
+} filter_expression;
+
 enum errors {
 	ERR_OPEN = 1,
 	ERR_FSTAT,
@@ -126,6 +178,7 @@ typedef struct _parser_context {
 	int8_t premature_eof;
 	int8_t out_of_memory;
 	int error;
+	filter_expression* filter;
 } parser_context;
 
 
@@ -226,7 +279,7 @@ int capture_via_delim(parser_context* ctx,char delim,char** out) {
 	return 0;
 }
 
-int username(parser_context* ctx) {
+int parse_username(parser_context* ctx) {
 	char* uname = NULL;
 	int offset_end = capture_via_delim(ctx,':',&uname);
 	if(offset_end > ctx->buf_index) {
@@ -242,7 +295,7 @@ int username(parser_context* ctx) {
 	}
 	return 0;
 }
-int password(parser_context* ctx) {
+int parse_password(parser_context* ctx) {
 	char* p = NULL;
 	int offset_end = capture_via_delim(ctx,':',&p);
 	if(offset_end > ctx->buf_index) {
@@ -329,7 +382,6 @@ void free_arena(parser_context* ctx) {
 			free(ctx->arena);
 			ctx->arena = NULL;
 		}
-		free(ctx);
 	}
 }
 
@@ -341,6 +393,7 @@ void pwp_close(parser_context* ctx) {
 		close(ctx->fd);
 	}
 	free_arena(ctx);
+	free(ctx);
 }
 enum stage {
 	STAGE_INIT = 0,
@@ -388,17 +441,20 @@ enum parse_result {
 	PARSE_ERR_SYNTAX_ERROR = -2,
 	PARSE_OK = 0,
 };
-int pwp_parse(parser_context* ctx) {
+
+
+int pwp_parse(parser_context* ctx, filter_expression* filter) {
 	if(ctx->stage < STAGE_READY) {
 		ctx->error = ERR_MUST_CALL_CREATE;
 		return PARSE_ERR_MUST_CALL_CREATE;
 	}
+	ctx->filter = filter;
 
 	/** This while loop is essentially int line() */
 	while(ctx->out_of_memory == 0 &&
 	    ctx->buf_index < CTX_READ_SIZE(ctx) &&
 	    ctx->premature_eof == 0) {
-		int offset = username(ctx);
+		int offset = parse_username(ctx);
 		if(offset == 0) {
 			ctx->error = ERR_USERNAME;
 			return PARSE_ERR_SYNTAX_ERROR;
@@ -409,7 +465,7 @@ int pwp_parse(parser_context* ctx) {
 			return PARSE_ERR_SYNTAX_ERROR;
 		}
 		++ctx->buf_index;
-		offset = password(ctx);
+		offset = parse_password(ctx);
 		if(offset == 0) {
 			ctx->error = ERR_PASSWORD;
 			return PARSE_ERR_SYNTAX_ERROR;
@@ -482,12 +538,12 @@ int pwp_parse(parser_context* ctx) {
 	}
 	printf("\t[ Bytes in use: %lu ]\n",ctx->arena_index);
 
-	//tList* ptr = users_list_head;
-	//while(ptr) {
-	//	printf("%s's shell: %s\n",ptr->username,ptr->shell);
-	//	printf("%s's home: %s\n",ptr->username,ptr->home);
-	//	ptr = ptr->next;
-	//}
+	tList* ptr = ctx->users_list_head;
+	while(ptr) {
+		printf("%s's shell: %s\n",ptr->username,ptr->shell);
+		printf("%s's home: %s\n",ptr->username,ptr->home);
+		ptr = ptr->next;
+	}
 
 	return PARSE_OK;
 }

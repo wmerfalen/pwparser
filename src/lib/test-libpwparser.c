@@ -16,7 +16,14 @@ int main(int argc, char** argv) {
 		return 2;
 	}
 
-	int parse_status = pwp_parse(ctx);
+	filter_expression filter;
+	filter.target = T_COLUMN;
+	filter.target_data = T_USERNAME;
+	filter.operation = OP_STRING_COMPARE;
+	filter.operation_data = NO_OPERATION_DATA;
+	filter.data = strdup("root");
+
+	int parse_status = pwp_parse(ctx,&filter);
 	if(parse_status != PARSE_OK) {
 		fprintf(
 		    stderr,
@@ -24,9 +31,12 @@ int main(int argc, char** argv) {
 		    ctx->error,
 		    pwp_strerror(ctx->error)
 		);
+		free(filter.data);
+		pwp_close(ctx);
 		return 3;
 	}
 
+	free(filter.data);
 	pwp_close(ctx);
 
 	return EXIT_SUCCESS;

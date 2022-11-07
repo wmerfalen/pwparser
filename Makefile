@@ -6,10 +6,7 @@ BUILD_DIR=build
 LIB_TEST=$(BUILD_DIR)/libtest
 DEBUG_FLAGS=-g
 
-#main:
-	#$(CC) $(FLAGS) main.c -o $(BIN)
-
-libtest:
+libtest: build
 	$(CC) $(DEBUG_FLAGS) $(FLAGS) src/lib/test-libpwparser.c -o $(LIB_TEST)
 
 all: build
