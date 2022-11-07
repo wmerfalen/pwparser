@@ -304,82 +304,17 @@ int parse_shell(parser_context* ctx) {
 	}
 	return 0;
 }
-void handle_error(int exit_status) {
-	char* where = NULL;
-	switch(exit_status) {
-		case ERR_OPEN:
-			where = "open";
-			break;
-		case ERR_FSTAT:
-			where = "fstat";
-			break;
-		case ERR_MMAP:
-			where = "mmap";
-			break;
-		case ERR_USERNAME:
-			where = "expected username";
-			break;
-		case ERR_COLON:
-			where = "expected colon";
-			break;
-		case ERR_PASSWORD:
-			where = "expected password";
-			break;
-		case ERR_COLON_PASSWORD:
-			where = "expected colon after password";
-			break;
-		case ERR_UID:
-			where = "expected UID";
-			break;
-		case ERR_COLON_UID:
-			where = "expected colon after UID";
-			break;
-		case ERR_GID:
-			where = "expected GID";
-			break;
-		case ERR_COLON_GID:
-			where = "expected colon after GID";
-			break;
-		case ERR_GECOS:
-			where = "expected GECOS";
-			break;
-		case ERR_GECOS_COLON:
-			where = "expected colon after GECOS";
-			break;
-		case ERR_HOMEDIR:
-			where = "expected home directory";
-			break;
-		case ERR_COLON_HOMEDIR:
-			where = "expected colon after HOME directory";
-			break;
-		case ERR_SHELL:
-			where = "expected SHELL";
-			break;
-		case ERR_NEWLINE:
-			where = "expected NEWLINE";
-			break;
-		default:
-			where = "unknown";
-			break;
-	}
-	if(line_number) {
-		fprintf(stderr,"Failure: '%s' on line %d\n",where,line_number);
-	} else {
-		fprintf(stderr,"Failure: '%s'\n",where);
-	}
-}
-
 void dump(parser_context* ctx) {
 	assert(ctx != NULL);
 #ifdef DEBUG
 	int f = 10;
 	printf("\n--[ dump ]--\n");
-	for(size_t i = buf_index; i < CTX_READ_SIZE(ctx); i++) {
+	for(off_t i = ctx->buf_index; i < CTX_READ_SIZE(ctx); i++) {
 		--f;
 		if(f == 0) {
 			break;
 		}
-		printf("%c",buf[i]);
+		printf("%c",ctx->buf[i]);
 	}
 	printf("--[ end dump ]--\n");
 #endif
@@ -473,7 +408,7 @@ int pwp_parse(parser_context* ctx) {
 			ctx->error = ERR_COLON;
 			return PARSE_ERR_SYNTAX_ERROR;
 		}
-		++(ctx->buf_index);
+		++ctx->buf_index;
 		offset = password(ctx);
 		if(offset == 0) {
 			ctx->error = ERR_PASSWORD;
@@ -484,7 +419,7 @@ int pwp_parse(parser_context* ctx) {
 			ctx->error = ERR_COLON_PASSWORD;
 			return PARSE_ERR_SYNTAX_ERROR;
 		}
-		++(ctx->buf_index);
+		++ctx->buf_index;
 		offset = parse_uid(ctx);
 		if(offset == 0) {
 			ctx->error = ERR_UID;
@@ -495,7 +430,7 @@ int pwp_parse(parser_context* ctx) {
 			ctx->error = ERR_COLON_UID;
 			return PARSE_ERR_SYNTAX_ERROR;
 		}
-		++(ctx->buf_index);
+		++ctx->buf_index;
 		offset = parse_gid(ctx);
 		if(offset == 0) {
 			ctx->error = ERR_GID;
@@ -506,7 +441,7 @@ int pwp_parse(parser_context* ctx) {
 			ctx->error = ERR_COLON_GID;
 			return PARSE_ERR_SYNTAX_ERROR;
 		}
-		++(ctx->buf_index);
+		++ctx->buf_index;
 		offset = parse_gecos(ctx);
 		/**
 		 * GECOS field can be empty.
@@ -520,7 +455,7 @@ int pwp_parse(parser_context* ctx) {
 			ctx->error = ERR_GECOS_COLON;
 			return PARSE_ERR_SYNTAX_ERROR;
 		}
-		++(ctx->buf_index);
+		++ctx->buf_index;
 		offset = parse_homedir(ctx);
 		if(offset == 0) {
 			ctx->error = ERR_HOMEDIR;
@@ -528,18 +463,21 @@ int pwp_parse(parser_context* ctx) {
 		}
 		ctx->buf_index += offset;
 		if(!expect(ctx,COLON)) {
-			return ERR_COLON_HOMEDIR;
+			ctx->error = ERR_COLON_HOMEDIR;
+			return PARSE_ERR_SYNTAX_ERROR;
 		}
-		++buf_index;
-		offset = parse_shell();
+		++ctx->buf_index;
+		offset = parse_shell(ctx);
 		if(offset == 0) {
-			return ERR_SHELL;
+			ctx->error = ERR_SHELL;
+			return PARSE_ERR_SYNTAX_ERROR;
 		}
-		buf_index += offset;
-		if(!expect(NEWLINE)) {
-			return ERR_NEWLINE;
+		ctx->buf_index += offset;
+		if(!expect(ctx,NEWLINE)) {
+			ctx->error = ERR_NEWLINE;
+			return PARSE_ERR_SYNTAX_ERROR;
 		}
-		++buf_index;
+		++ctx->buf_index;
 		++(ctx->line_number);
 	}
 	printf("\t[ Bytes in use: %lu ]\n",ctx->arena_index);
@@ -554,4 +492,3 @@ int pwp_parse(parser_context* ctx) {
 	return PARSE_OK;
 }
 
-#endif
