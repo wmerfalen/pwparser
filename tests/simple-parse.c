@@ -123,10 +123,11 @@ int main(int argc, char** argv) {
 		usage(argv[0]);
 		return 1;
 	}
-	//int esp = example_simple_parse(argv[1]);
-	//printf("esp: %d\n",esp);
-	int epluck = example_pluck(argv[1]);
-	printf("epluck: %d\n",epluck);
+	int esp = example_simple_parse(argv[1]);
+	printf("esp: %d\n",esp);
+
+	//int epluck = example_pluck(argv[1]);
+	//printf("epluck: %d\n",epluck);
 
 	return 0;
 }
