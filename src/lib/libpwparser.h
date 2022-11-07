@@ -35,7 +35,69 @@ enum errors {
 	ERR_SHELL,
 	ERR_NEWLINE,
 	ERR_OUT_OF_MEMORY,
+	ERR_NO_FILE_SPECIFIED,
+	ERR_MUST_CALL_CREATE,
 };
+const char* pwp_strerror(int error_code) {
+	static const char* where = NULL;
+	switch(error_code) {
+		case ERR_OPEN:
+			where = "open";
+			break;
+		case ERR_FSTAT:
+			where = "fstat";
+			break;
+		case ERR_MMAP:
+			where = "mmap";
+			break;
+		case ERR_USERNAME:
+			where = "expected username";
+			break;
+		case ERR_COLON:
+			where = "expected colon";
+			break;
+		case ERR_PASSWORD:
+			where = "expected password";
+			break;
+		case ERR_COLON_PASSWORD:
+			where = "expected colon after password";
+			break;
+		case ERR_UID:
+			where = "expected UID";
+			break;
+		case ERR_COLON_UID:
+			where = "expected colon after UID";
+			break;
+		case ERR_GID:
+			where = "expected GID";
+			break;
+		case ERR_COLON_GID:
+			where = "expected colon after GID";
+			break;
+		case ERR_GECOS:
+			where = "expected GECOS";
+			break;
+		case ERR_GECOS_COLON:
+			where = "expected colon after GECOS";
+			break;
+		case ERR_HOMEDIR:
+			where = "expected home directory";
+			break;
+		case ERR_COLON_HOMEDIR:
+			where = "expected colon after HOME directory";
+			break;
+		case ERR_SHELL:
+			where = "expected SHELL";
+			break;
+		case ERR_NEWLINE:
+			where = "expected NEWLINE";
+			break;
+		default:
+			where = "unknown";
+			break;
+	}
+	return where;
+}
 
 typedef struct sList {
 	char* username;
@@ -49,11 +111,12 @@ typedef struct sList {
 } tList;
 
 typedef struct _parser_context {
-	const char* buf;
+	char* buf;
 	off_t buf_index;
-	const char* file_name;
+	char* file_name;
 	struct stat stats;
 	int fd;
+	int stage;
 	size_t arena_index;
 	size_t arena_size;
 	void* arena;
@@ -61,6 +124,7 @@ typedef struct _parser_context {
 	tList* users_list_head;
 	unsigned int line_number;
 	int8_t premature_eof;
+	int8_t out_of_memory;
 	int error;
 } parser_context;
 
@@ -73,7 +137,6 @@ void double_arena(parser_context* ctx) {
 	ctx->arena_size *= 2;
 	ctx->arena = realloc(ctx->arena,ctx->arena_size);
 }
-void dump();
 
 void* pwp_malloc(parser_context* ctx,size_t s) {
 	intptr_t base = (intptr_t)((char*)ctx->arena);
@@ -148,7 +211,7 @@ void append_element(parser_context* ctx,tList* e) {
 	ctx->users_list->next = NULL;
 }
 int capture_via_delim(parser_context* ctx,char delim,char** out) {
-	int offset_end = scan_until(delim);
+	int offset_end = scan_until(ctx,delim);
 	if(offset_end > ctx->buf_index) {
 		size_t len = offset_end - ctx->buf_index;
 		*out = (char*)pwp_malloc(ctx,len + 1);
@@ -156,7 +219,7 @@ int capture_via_delim(parser_context* ctx,char delim,char** out) {
 			fprintf(stderr,"OUT OF MEMORY");
 			return 0;
 		}
-		bcopy(&buf[buf_index],*out,len);
+		bcopy(&ctx->buf[ctx->buf_index],*out,len);
 		(*out)[len] = 0x0;
 		return offset_end;
 	}
@@ -165,7 +228,7 @@ int capture_via_delim(parser_context* ctx,char delim,char** out) {
 
 int username(parser_context* ctx) {
 	char* uname = NULL;
-	int offset_end = capture_via_delim(':',&uname);
+	int offset_end = capture_via_delim(ctx,':',&uname);
 	if(offset_end > ctx->buf_index) {
 		tList* element = (tList*)pwp_malloc(ctx,sizeof(tList));
 		if(ctx->out_of_memory) {
@@ -179,66 +242,65 @@ int username(parser_context* ctx) {
 	}
 	return 0;
 }
-#if 0
-int password() {
+int password(parser_context* ctx) {
 	char* p = NULL;
-	int offset_end = capture_via_delim(':',&p);
-	if(offset_end > buf_index) {
-		users_list->password = p;
-		return offset_end - buf_index;
+	int offset_end = capture_via_delim(ctx,':',&p);
+	if(offset_end > ctx->buf_index) {
+		ctx->users_list->password = p;
+		return offset_end - ctx->buf_index;
 	}
 	return 0;
 }
 
-int parse_uid() {
+int parse_uid(parser_context* ctx) {
 	char* uid = NULL;
-	int offset_end = capture_via_delim(':',&uid);
-	if(offset_end > buf_index) {
-		users_list->uid = atoi(uid);
-		return offset_end - buf_index;
+	int offset_end = capture_via_delim(ctx,':',&uid);
+	if(offset_end > ctx->buf_index) {
+		ctx->users_list->uid = atoi(uid);
+		return offset_end - ctx->buf_index;
 	}
 	return 0;
 }
 
-int parse_gid() {
+int parse_gid(parser_context* ctx) {
 	char* gid = NULL;
-	int offset_end = capture_via_delim(':',&gid);
-	if(offset_end > buf_index) {
-		users_list->gid = atoi(gid);
-		return offset_end - buf_index;
+	int offset_end = capture_via_delim(ctx,':',&gid);
+	if(offset_end > ctx->buf_index) {
+		ctx->users_list->gid = atoi(gid);
+		return offset_end - ctx->buf_index;
 	}
 	return 0;
 }
 
-int parse_gecos() {
-	if(buf[buf_index] == ':') {
-		users_list->gecos_uid = NULL;
+int parse_gecos(parser_context* ctx) {
+	if(ctx->buf[ctx->buf_index] == ':') {
+		ctx->users_list->gecos_uid = NULL;
 		return 0;
 	}
 	char* gecos = NULL;
-	int offset_end = capture_via_delim(':',&gecos);
-	if(offset_end > buf_index) {
-		users_list->gecos_uid = gecos;
-		return offset_end - buf_index;
+	int offset_end = capture_via_delim(ctx,':',&gecos);
+	if(offset_end > ctx->buf_index) {
+		ctx->users_list->gecos_uid = gecos;
+		return offset_end - ctx->buf_index;
 	}
 	return 0;
 }
-int parse_homedir() {
+int parse_homedir(parser_context* ctx) {
 	char* hd = NULL;
-	int offset_end = capture_via_delim(':',&hd);
-	if(offset_end > buf_index) {
-		users_list->home = hd;
-		return offset_end - buf_index;
+	int offset_end = capture_via_delim(ctx,':',&hd);
+	if(offset_end > ctx->buf_index) {
+		ctx->users_list->home = hd;
+		return offset_end - ctx->buf_index;
 	}
 	return 0;
 }
-int parse_shell() {
+int parse_shell(parser_context* ctx) {
 	char* sh = NULL;
-	users_list->shell = NULL;
-	int offset_end = capture_via_delim('\n',&sh);
-	if(offset_end > buf_index) {
-		users_list->shell = sh;
-		return offset_end - buf_index;
+	ctx->users_list->shell = NULL;
+	int offset_end = capture_via_delim(ctx,'\n',&sh);
+	if(offset_end > ctx->buf_index) {
+		ctx->users_list->shell = sh;
+		return offset_end - ctx->buf_index;
 	}
 	return 0;
 }
@@ -324,107 +386,148 @@ void dump(parser_context* ctx) {
 }
 #endif
 
-void close_context(parser_context* ctx) {
-	if(ctx->buf) {
-		munmap(ctx->buf, CTX_READ_SIZE(ctx));
+void free_arena(parser_context* ctx) {
+	assert(ctx != NULL);
+	if(ctx) {
+		if(ctx->arena) {
+			ctx->arena_size = 0;
+			free(ctx->arena);
+			ctx->arena = NULL;
+		}
+		free(ctx);
 	}
-	//FIXME: figure out what to run here to free our
-	//resources to the operating system
+}
+
+void pwp_close(parser_context* ctx) {
+	if(ctx->buf) {
+		munmap((char*)ctx->buf, CTX_READ_SIZE(ctx));
+	}
 	if(ctx->fd > -1) {
 		close(ctx->fd);
 	}
 	free_arena(ctx);
 }
-parser_context* pwp_import(char* file) {
+enum stage {
+	STAGE_INIT = 0,
+	STAGE_FILE_OPENED,
+	STAGE_STATS_FETCHED,
+	STAGE_FILE_MAPPED,
+	STAGE_READY,
+};
+parser_context* pwp_create_from(const char* file) {
 	parser_context* ctx = (parser_context*)malloc(sizeof(parser_context));
 	memset(ctx,0,sizeof(parser_context));
-	ctx->file_name = file;
+	ctx->stage = STAGE_INIT;
+	ctx->file_name = (char*)file;
 	if(ctx->file_name == NULL) {
-		ctx->file_name = "/etc/passwd";
+		ctx->error = ERR_NO_FILE_SPECIFIED;
+		return ctx;
 	}
 	ctx->fd = open(ctx->file_name, O_RDONLY);
 	if(ctx->fd == -1) {
 		ctx->error = ERR_OPEN;
 		return ctx;
 	}
+	ctx->stage = STAGE_FILE_OPENED;
 
 	if(fstat(ctx->fd, &(ctx->stats)) == -1) {          /* To obtain file size */
 		ctx->error = ERR_FSTAT;
 		return ctx;
 	}
+	ctx->stage = STAGE_STATS_FETCHED;
+	ctx->buf = (char*)mmap(NULL, CTX_READ_SIZE(ctx), PROT_READ, MAP_PRIVATE, ctx->fd, 0);
+	if(ctx->buf == MAP_FAILED) {
+		ctx->error = ERR_MMAP;
+		return ctx;
+	}
+	ctx->stage = STAGE_FILE_MAPPED;
 	init_arena(ctx,(ctx->stats.st_size) * 3);
+	ctx->stage = STAGE_READY;
 	return ctx;
 }
 parser_context* pwp_create() {
-	return pwp_import("/etc/passwd");
+	return pwp_create_from("/etc/passwd");
 }
-int parse(parser_context* ctx,char* pw_file) {
-	ctx->buf_index = 0;
-	ctx->buf = NULL;
-
-	ctx->buf = (char*)mmap(NULL, CTX_READ_SIZE(ctx), PROT_READ, MAP_PRIVATE, fd, 0);
-	if(addr == MAP_FAILED) {
-		return ERR_MMAP;
+enum parse_result {
+	PARSE_ERR_MUST_CALL_CREATE = -1,
+	PARSE_ERR_SYNTAX_ERROR = -2,
+	PARSE_OK = 0,
+};
+int pwp_parse(parser_context* ctx) {
+	if(ctx->stage < STAGE_READY) {
+		ctx->error = ERR_MUST_CALL_CREATE;
+		return PARSE_ERR_MUST_CALL_CREATE;
 	}
-	buf = addr;
 
 	/** This while loop is essentially int line() */
-	while(out_of_memory == 0 && buf_index < read_size && premature_eof == 0) {
-		int offset = username();
+	while(ctx->out_of_memory == 0 &&
+	    ctx->buf_index < CTX_READ_SIZE(ctx) &&
+	    ctx->premature_eof == 0) {
+		int offset = username(ctx);
 		if(offset == 0) {
-			return ERR_USERNAME;
+			ctx->error = ERR_USERNAME;
+			return PARSE_ERR_SYNTAX_ERROR;
 		}
-		buf_index += offset;
-		if(!expect(COLON)) {
-			return ERR_COLON;
+		ctx->buf_index += offset;
+		if(!expect(ctx,COLON)) {
+			ctx->error = ERR_COLON;
+			return PARSE_ERR_SYNTAX_ERROR;
 		}
-		++buf_index;
-		offset = password();
+		++(ctx->buf_index);
+		offset = password(ctx);
 		if(offset == 0) {
-			return ERR_PASSWORD;
+			ctx->error = ERR_PASSWORD;
+			return PARSE_ERR_SYNTAX_ERROR;
 		}
-		buf_index += offset;
-		if(!expect(COLON)) {
-			return ERR_COLON_PASSWORD;
+		ctx->buf_index += offset;
+		if(!expect(ctx,COLON)) {
+			ctx->error = ERR_COLON_PASSWORD;
+			return PARSE_ERR_SYNTAX_ERROR;
 		}
-		++buf_index;
-		offset = parse_uid();
+		++(ctx->buf_index);
+		offset = parse_uid(ctx);
 		if(offset == 0) {
-			return ERR_UID;
+			ctx->error = ERR_UID;
+			return PARSE_ERR_SYNTAX_ERROR;
 		}
-		buf_index += offset;
-		if(!expect(COLON)) {
-			return ERR_COLON_UID;
+		ctx->buf_index += offset;
+		if(!expect(ctx,COLON)) {
+			ctx->error = ERR_COLON_UID;
+			return PARSE_ERR_SYNTAX_ERROR;
 		}
-		++buf_index;
-		offset = parse_gid();
+		++(ctx->buf_index);
+		offset = parse_gid(ctx);
 		if(offset == 0) {
-			return ERR_GID;
+			ctx->error = ERR_GID;
+			return PARSE_ERR_SYNTAX_ERROR;
 		}
-		buf_index += offset;
-		if(!expect(COLON)) {
-			return ERR_COLON_GID;
+		ctx->buf_index += offset;
+		if(!expect(ctx,COLON)) {
+			ctx->error = ERR_COLON_GID;
+			return PARSE_ERR_SYNTAX_ERROR;
 		}
-		++buf_index;
-		offset = parse_gecos();
+		++(ctx->buf_index);
+		offset = parse_gecos(ctx);
 		/**
 		 * GECOS field can be empty.
 		 * So we don't enforce it here with a check
 		 * on whether or not offset will be zero
 		 */
 		if(offset) {
-			buf_index += offset;
+			ctx->buf_index += offset;
 		}
-		if(!expect(COLON)) {
-			return ERR_GECOS_COLON;
+		if(!expect(ctx,COLON)) {
+			ctx->error = ERR_GECOS_COLON;
+			return PARSE_ERR_SYNTAX_ERROR;
 		}
-		++buf_index;
-		offset = parse_homedir();
+		++(ctx->buf_index);
+		offset = parse_homedir(ctx);
 		if(offset == 0) {
-			return ERR_HOMEDIR;
+			ctx->error = ERR_HOMEDIR;
+			return PARSE_ERR_SYNTAX_ERROR;
 		}
-		buf_index += offset;
-		if(!expect(COLON)) {
+		ctx->buf_index += offset;
+		if(!expect(ctx,COLON)) {
 			return ERR_COLON_HOMEDIR;
 		}
 		++buf_index;
@@ -437,24 +540,18 @@ int parse(parser_context* ctx,char* pw_file) {
 			return ERR_NEWLINE;
 		}
 		++buf_index;
-		++line_number;
+		++(ctx->line_number);
 	}
-#ifdef DEBUG
-	printf("\t[ Bytes in use: %d ]\n",arena_index);
-#endif
-	tList* ptr = users_list_head;
-	while(ptr) {
-		printf("%s's shell: %s\n",ptr->username,ptr->shell);
-		printf("%s's home: %s\n",ptr->username,ptr->home);
-		ptr = ptr->next;
-	}
+	printf("\t[ Bytes in use: %lu ]\n",ctx->arena_index);
 
-	munmap(addr, length);
-	close(fd);
+	//tList* ptr = users_list_head;
+	//while(ptr) {
+	//	printf("%s's shell: %s\n",ptr->username,ptr->shell);
+	//	printf("%s's home: %s\n",ptr->username,ptr->home);
+	//	ptr = ptr->next;
+	//}
 
-
-	free_arena();
-	return EXIT_SUCCESS;
+	return PARSE_OK;
 }
 
 #endif
