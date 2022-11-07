@@ -1,8 +1,6 @@
 #ifndef __ETC_PASSWD_PARSER_LIB_HEADER__
 #define __ETC_PASSWD_PARSER_LIB_HEADER__
 
-// TODO REMOVE ME
-#define DEBUG
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -11,10 +9,9 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#include <sys/types.h>
 #include <fcntl.h>
 
-#define CTX_READ_SIZE(c) c->stats.st_size
+#define CTX_BUF_SZ(c) c->stats.st_size
 
 enum target_type {
 	/**
@@ -91,6 +88,7 @@ enum {
 };
 
 typedef struct _parser_context {
+	int mask;
 	char* buf;
 	off_t buf_index;
 	char* file_name;
@@ -233,7 +231,7 @@ enum symbol {
 };
 
 int expect(parser_context* ctx,unsigned int s) {
-	if(ctx->buf_index >= CTX_READ_SIZE(ctx)) {
+	if(ctx->buf_index >= CTX_BUF_SZ(ctx)) {
 		ctx->premature_eof = 1;
 		return 0;
 	}
@@ -255,12 +253,12 @@ int expect(parser_context* ctx,unsigned int s) {
 	return 0;
 }
 int scan_until(parser_context* ctx,char sentinel) {
-	if(ctx->buf_index >= CTX_READ_SIZE(ctx)) {
+	if(ctx->buf_index >= CTX_BUF_SZ(ctx)) {
 		ctx->premature_eof = 1;
 		return 0;
 	}
 	off_t ctr = ctx->buf_index;
-	for(; ctr < CTX_READ_SIZE(ctx); ctr++) {
+	for(; ctr < CTX_BUF_SZ(ctx); ctr++) {
 		if(ctx->buf[ctr] == sentinel) {
 			return ctr;
 		}
@@ -282,8 +280,11 @@ int capture_via_delim(parser_context* ctx,char delim,char** out) {
 	if(offset_end > ctx->buf_index) {
 		size_t len = offset_end - ctx->buf_index;
 		*out = (char*)pwp_malloc(ctx,len + 1);
+		assert(!ctx->out_of_memory);
 		if(ctx->out_of_memory) {
+#ifdef DEBUG
 			fprintf(stderr,"OUT OF MEMORY");
+#endif
 			return 0;
 		}
 		bcopy(&ctx->buf[ctx->buf_index],*out,len);
@@ -298,6 +299,7 @@ int parse_username(parser_context* ctx) {
 	int offset_end = capture_via_delim(ctx,':',&uname);
 	if(offset_end > ctx->buf_index) {
 		tList* element = (tList*)pwp_malloc(ctx,sizeof(tList));
+		assert(!ctx->out_of_memory);
 		if(ctx->out_of_memory) {
 			ctx->error = ERR_OUT_OF_MEMORY;
 			return 0;
@@ -376,7 +378,7 @@ void dump(parser_context* ctx) {
 #ifdef DEBUG
 	int f = 10;
 	printf("\n--[ dump ]--\n");
-	for(off_t i = ctx->buf_index; i < CTX_READ_SIZE(ctx); i++) {
+	for(off_t i = ctx->buf_index; i < CTX_BUF_SZ(ctx); i++) {
 		--f;
 		if(f == 0) {
 			break;
@@ -401,7 +403,7 @@ void free_arena(parser_context* ctx) {
 
 void pwp_close(parser_context* ctx) {
 	if(ctx->buf) {
-		munmap((char*)ctx->buf, CTX_READ_SIZE(ctx));
+		munmap((char*)ctx->buf, CTX_BUF_SZ(ctx));
 	}
 	if(ctx->fd > -1) {
 		close(ctx->fd);
@@ -437,7 +439,7 @@ parser_context* pwp_create_from(const char* file) {
 		return ctx;
 	}
 	ctx->stage = STAGE_STATS_FETCHED;
-	ctx->buf = (char*)mmap(NULL, CTX_READ_SIZE(ctx), PROT_READ, MAP_PRIVATE, ctx->fd, 0);
+	ctx->buf = (char*)mmap(NULL, CTX_BUF_SZ(ctx), PROT_READ, MAP_PRIVATE, ctx->fd, 0);
 	if(ctx->buf == MAP_FAILED) {
 		ctx->error = ERR_MMAP;
 		return ctx;
@@ -447,27 +449,31 @@ parser_context* pwp_create_from(const char* file) {
 	ctx->stage = STAGE_READY;
 	return ctx;
 }
-parser_context* pwp_create() {
+parser_context* pwp_create(char* file) {
+	if(file) {
+		return pwp_create_from(file);
+	}
 	return pwp_create_from("/etc/passwd");
 }
 enum parse_result {
 	PARSE_ERR_MUST_CALL_CREATE = -1,
 	PARSE_ERR_SYNTAX_ERROR = -2,
+	PARSE_ERR_LOGIC_ERROR = -3,
 	PARSE_OK = 0,
 };
 
 
-int pwp_parse(parser_context* ctx, filter_expression* filter) {
+int pwp_parse(parser_context* ctx) {
 	if(ctx->stage < STAGE_READY) {
 		ctx->error = ERR_MUST_CALL_CREATE;
 		return PARSE_ERR_MUST_CALL_CREATE;
 	}
-	ctx->filter = filter;
+	ctx->filter = NULL;
 
 	int8_t keep_parsing= 1;
 	/** This while loop is essentially int line() */
 	while(keep_parsing && ctx->out_of_memory == 0 &&
-	    ctx->buf_index < CTX_READ_SIZE(ctx) &&
+	    ctx->buf_index < CTX_BUF_SZ(ctx) &&
 	    ctx->premature_eof == 0) {
 		int offset = parse_username(ctx);
 		if(offset == 0) {
@@ -563,20 +569,67 @@ int pwp_parse(parser_context* ctx, filter_expression* filter) {
 					keep_parsing = 1;
 					break;
 				default:
+#ifdef DEBUG
 					fprintf(stderr,"Unhandled CB_* constant: '%d'\n",result);
+#endif
 					break;
 			}
 		}
 	}
+#ifdef DEBUG
 	printf("\t[ Bytes in use: %lu ]\n",ctx->arena_index);
+#endif
 
-	//tList* ptr = ctx->users_list_head;
-	//while(ptr) {
-	//	printf("%s's shell: %s\n",ptr->username,ptr->shell);
-	//	printf("%s's home: %s\n",ptr->username,ptr->home);
-	//	ptr = ptr->next;
-	//}
+#define SHOULD_STOP(s) if(s == CB_STOP_ITERATING){ break; }
+	if(ctx->column_cb) {
+		tList* ptr = ctx->users_list_head;
+		while(ptr) {
+			int status = 0;
+			if(ctx->mask & T_USERNAME) {
+				status = (*(ctx->column_cb))(T_USERNAME,ptr->username,NULL);
+				SHOULD_STOP(status);
+			}
+			if(ctx->mask & T_PASSWORD) {
+				status = (*(ctx->column_cb))(T_PASSWORD,ptr->password,NULL);
+				SHOULD_STOP(status);
+			}
+			if(ctx->mask & T_UID) {
+				status = (*(ctx->column_cb))(T_UID,NULL,&ptr->uid);
+				SHOULD_STOP(status);
+			}
+			if(ctx->mask & T_GID) {
+				status = (*(ctx->column_cb))(T_GID,NULL,&ptr->gid);
+				SHOULD_STOP(status);
+			}
+			if(ctx->mask & T_GECOS) {
+				status = (*(ctx->column_cb))(T_GECOS,ptr->gecos_uid,NULL);
+				SHOULD_STOP(status);
+			}
+			if(ctx->mask & T_HOME) {
+				status = (*(ctx->column_cb))(T_HOME,ptr->home,NULL);
+				SHOULD_STOP(status);
+			}
+			if(ctx->mask & T_SHELL) {
+				status = (*(ctx->column_cb))(T_SHELL,ptr->shell,NULL);
+				SHOULD_STOP(status);
+			}
+			ptr = ptr->next;
+		}
+	}
 
 	return PARSE_OK;
 }
 
+/**
+ * column_mask is the bitmask combination of T_* enums.
+ * Example:
+ * pwp_pluck_column(ctx, (T_USERNAME | T_SHELL | T_UID), callback);
+ */
+int pwp_pluck_column(parser_context* ctx, int column_mask, column_callback* cb) {
+	if(!ctx) {
+		return PARSE_ERR_LOGIC_ERROR;
+	}
+	ctx->column_cb = cb;
+	ctx->mask = column_mask;
+	return pwp_parse(ctx);
+}
