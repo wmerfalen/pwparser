@@ -60,6 +60,7 @@ enum operation_type {
 	//OP_EMPTY,
 	//OP_COUNT,
 };
+
 typedef struct _filter_expression {
 	unsigned int target;
 	unsigned int target_data;
@@ -67,6 +68,49 @@ typedef struct _filter_expression {
 	unsigned int operation_data;
 	char* data;
 } filter_expression;
+
+typedef struct sList {
+	char* username;
+	char* password;
+	char* gecos_uid;
+	char* home;
+	char* shell;
+	unsigned int uid;
+	unsigned int gid;
+	struct sList* next;
+} tList;
+
+typedef int(*row_callback)(tList*);
+typedef int(*column_callback)(int column,char* ptr,unsigned int* i_ptr);
+
+enum {
+	CB_STOP_ITERATING,
+	CB_SKIP_STORAGE,
+	CB_SKIP_ROW,
+	CB_KEEP_ITERATING,
+};
+
+typedef struct _parser_context {
+	char* buf;
+	off_t buf_index;
+	char* file_name;
+	struct stat stats;
+	int fd;
+	int stage;
+	size_t arena_index;
+	size_t arena_size;
+	void* arena;
+	tList* users_list;
+	tList* users_list_head;
+	unsigned int line_number;
+	int8_t premature_eof;
+	int8_t out_of_memory;
+	int error;
+	filter_expression* filter;
+	row_callback* row_cb;
+	column_callback* column_cb;
+} parser_context;
+
 
 enum errors {
 	ERR_OPEN = 1,
@@ -150,36 +194,6 @@ const char* pwp_strerror(int error_code) {
 	}
 	return where;
 }
-
-typedef struct sList {
-	char* username;
-	char* password;
-	char* gecos_uid;
-	char* home;
-	char* shell;
-	unsigned int uid;
-	unsigned int gid;
-	struct sList* next;
-} tList;
-
-typedef struct _parser_context {
-	char* buf;
-	off_t buf_index;
-	char* file_name;
-	struct stat stats;
-	int fd;
-	int stage;
-	size_t arena_index;
-	size_t arena_size;
-	void* arena;
-	tList* users_list;
-	tList* users_list_head;
-	unsigned int line_number;
-	int8_t premature_eof;
-	int8_t out_of_memory;
-	int error;
-	filter_expression* filter;
-} parser_context;
 
 
 void init_arena(parser_context* ctx,size_t sz) {
@@ -450,8 +464,9 @@ int pwp_parse(parser_context* ctx, filter_expression* filter) {
 	}
 	ctx->filter = filter;
 
+	int8_t keep_parsing= 1;
 	/** This while loop is essentially int line() */
-	while(ctx->out_of_memory == 0 &&
+	while(keep_parsing && ctx->out_of_memory == 0 &&
 	    ctx->buf_index < CTX_READ_SIZE(ctx) &&
 	    ctx->premature_eof == 0) {
 		int offset = parse_username(ctx);
@@ -535,15 +550,32 @@ int pwp_parse(parser_context* ctx, filter_expression* filter) {
 		}
 		++ctx->buf_index;
 		++(ctx->line_number);
+		if(ctx->row_cb != NULL) {
+			int result = (*(ctx->row_cb))(ctx->users_list);
+			switch(result) {
+				case CB_STOP_ITERATING:
+					keep_parsing = 0;
+					continue;
+				case CB_SKIP_STORAGE:
+				case CB_SKIP_ROW:
+				/** TODO: figure out how to do this */
+				case CB_KEEP_ITERATING:
+					keep_parsing = 1;
+					break;
+				default:
+					fprintf(stderr,"Unhandled CB_* constant: '%d'\n",result);
+					break;
+			}
+		}
 	}
 	printf("\t[ Bytes in use: %lu ]\n",ctx->arena_index);
 
-	tList* ptr = ctx->users_list_head;
-	while(ptr) {
-		printf("%s's shell: %s\n",ptr->username,ptr->shell);
-		printf("%s's home: %s\n",ptr->username,ptr->home);
-		ptr = ptr->next;
-	}
+	//tList* ptr = ctx->users_list_head;
+	//while(ptr) {
+	//	printf("%s's shell: %s\n",ptr->username,ptr->shell);
+	//	printf("%s's home: %s\n",ptr->username,ptr->home);
+	//	ptr = ptr->next;
+	//}
 
 	return PARSE_OK;
 }
